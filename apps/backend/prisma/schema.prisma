@@ -1,0 +1,71 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum NodeType {
+  FOLDER
+  FILE
+}
+
+enum Role {
+  MEMBER
+  VIEWER
+}
+
+model user {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  password   String
+  role       Role     @default(VIEWER)
+  nodes      node[]   @relation("UserOwnedNodes")
+  shares     share[]  @relation("UserShares")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model node {
+  id        String   @id @default(uuid())
+  name      String
+  type      NodeType
+  parent_id String?
+  owner_id  String
+  path      String?
+
+  // Materialized Path: Stores the ancestry line (e.g., "rootId/folder1Id/folder2Id/")
+  // This allows lightning fast sub-tree queries using a single indexed string lookup
+  ancestry  String   @default("") @db.Text
+
+  // Soft Delete Flag: Eliminates database locking and transaction timeouts during heavy cascades
+  is_deleted Boolean   @default(false)
+  deleted_at DateTime?
+
+  // Relations
+  parent   node?   @relation("Hierarchy", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children node[]  @relation("Hierarchy")
+  owner    user    @relation("UserOwnedNodes", fields: [owner_id], references: [id])
+  shares   share[] @relation("NodeShares")
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Performance Optimization & Conflict Resolution Indexing
+  @@index([parent_id, is_deleted])
+  @@index([owner_id, is_deleted])
+  @@index([ancestry]) // Speeds up sub-tree deletions, size calculations, and deep searching
+  @@unique([parent_id, name, owner_id, is_deleted]) // Enforces unique file/folder naming in the same directory context
+}
+
+model share {
+  id         String   @id @default(uuid())
+  node_id    String
+  shared_by  String
+  created_at DateTime @default(now())
+
+  node           node @relation("NodeShares", fields: [node_id], references: [id], onDelete: Cascade)
+  shared_by_user user @relation("UserShares", fields: [shared_by], references: [id], onDelete: Cascade)
+}
